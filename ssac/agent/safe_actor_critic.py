@@ -146,7 +146,7 @@ class Classifier(eqx.Module):
 
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         x = self.net(jnp.concatenate([state, action], axis=-1))
-        x = jax.nn.sigmoid(x)
+        #x = jax.nn.sigmoid(x) # instead 
         return x.squeeze(-1)
 
 def make_classifier(
