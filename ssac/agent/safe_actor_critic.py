@@ -146,7 +146,7 @@ class Classifier(eqx.Module):
 
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         x = self.net(jnp.concatenate([state, action], axis=-1))
-        #x = jax.nn.sigmoid(x) # instead 
+        #x = jax.nn.sigmoid(x) # let model predict logits instead of probabilities
         return x.squeeze(-1)
 
 def make_classifier(
@@ -386,9 +386,9 @@ def update_classifier(
         # Transform costs into binary targets (1 for costs <= 0, 0 for costs > 0, i.e. probability of safety)
         binary_targets = (batch.cost <= 0).astype(jnp.float32)
 
-        # Compute binary cross-entropy loss; need logits (log-probabilities of label)
-        loss = sigmoid_binary_cross_entropy(jnp.log(preds), binary_targets)
-        return loss.mean(), (jnp.median(preds), jnp.median(batch.cost)) #(preds, batch.cost) #(debugging)if we use the wandb logging in update function
+        # Compute binary cross-entropy loss; need logits
+        loss = sigmoid_binary_cross_entropy(preds, binary_targets)
+        return loss.mean(), (jnp.mean(jax.nn.sigmoid(preds)), jnp.mean(batch.cost)) #(preds, batch.cost) #(debugging)if we use the wandb logging in update function
 
     # Compute loss and gradients
     (loss, (preds_prob, costs)), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(classifier)
@@ -422,7 +422,8 @@ def update_safety_critics(
         next_qs = jax.vmap(target_safety_critics)(batch.next_observation, next_action)
         debiased_q = jnp.minimum(*next_qs)
         #compute log term of policy probability
-        safety_prob = jax.vmap(classifier)(batch.observation, batch.action)
+        safety_logit = jax.vmap(classifier)(batch.observation, batch.action)
+        safety_prob = jax.nn.sigmoid(safety_logit)
         #safety_prob = jnp.clip(safety_prob, 0.01, 0.99) #clip safety_prob
         log_safety_prob = jnp.log(safety_prob) #jnp.log(safety_prob) #classifier probability for safety #const: jnp.log(1.0)
         next_q = log_safety_prob + safety_discount * debiased_q

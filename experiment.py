@@ -8,7 +8,7 @@ from ssac.rl.trainer import get_state_path, load_state, should_resume, start_fre
 
 #P: teomporary ---disable rendering---
 import os
-os.environ['MUJOCO_GL'] = 'osmesa'
+os.environ['MUJOCO_GL'] = 'egl'
 #-------------------------------------
 _LOG = logging.getLogger(__name__)
 

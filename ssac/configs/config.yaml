@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - agent: sac
+  - agent: ssac
   - environment: safe_gym_point_to_goal
 
 hydra:
@@ -41,6 +41,6 @@ training:
   episodes_per_epoch: 5
   epochs: 200
   action_repeat: 1
-  render_episodes: 0 #1 usually; and find the problem with 1 (error in axes line 46 rl\epoch_summary.py: vids transpose)
+  render_episodes: 1 #1 usually; and find the problem with 1 (error in axes line 46 rl\epoch_summary.py: vids transpose)
   parallel_envs: 10
   scale_reward: 1.
