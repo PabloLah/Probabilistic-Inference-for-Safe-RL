@@ -57,7 +57,7 @@ def _objective(rewards: npt.NDArray[Any]) -> float:
 
 
 def _cost_rate(costs: npt.NDArray[Any]) -> float:
-    return float(costs.mean())
+    return float(costs.sum())
 
 
 def _feasibility(costs: npt.NDArray[Any], boundary: float) -> float:

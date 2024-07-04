@@ -112,7 +112,7 @@ class Trainer:
             objective, cost_rate, feasibilty = summary.metrics
             metrics = {
                 "train/objective": objective,
-                "train/cost_rate": cost_rate,
+                "train/cost_sum": cost_rate,
                 "train/feasibility": feasibilty,
                 "train/fps": steps / wall_time,
             }
