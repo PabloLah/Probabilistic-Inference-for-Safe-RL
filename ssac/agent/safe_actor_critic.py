@@ -13,7 +13,55 @@ from optax import OptState, l2_loss, sigmoid_binary_cross_entropy
 
 from ssac.rl.learner import Learner
 from ssac.rl.trajectory import Transition
+from ssac.agent.testing_fixed_classifier import CustomMLPClassifier
 
+
+
+
+
+#-----------------------------TESTING-----------------------------
+import sklearn
+#jax.config.update("jax_numpy_rank_promotion", "raise")  # or "raise" or "warn"
+#jax.config.update("jax_numpy_rank_promotion", False)
+from sklearn.neural_network import MLPClassifier as SklearnMLPClassifier
+
+class CustomMLPClassifier:
+    def __init__(self, state_dim, action_dim, hidden_size, max_iter=1, random_state=42):#dont train here
+        self.model = SklearnMLPClassifier(
+            hidden_layer_sizes=(hidden_size,hidden_size),
+            max_iter=max_iter,
+            batch_size=256,
+            tol=0.0000000000001,
+            activation='relu',
+            solver='adam',
+            random_state=random_state,
+            verbose=False
+        )
+
+    def train(self, X, y):
+        self.model.fit(X, y)
+
+    def predict(self, X):
+        return self.model.predict(X)
+
+    def predict_proba(self, X):
+        return self.model.predict_proba(X)[:, 1]  # Probability of class 1 (safe)
+    
+    def get_model_weights(self):
+        return self.model.coefs_
+
+    def set_model_weights(self, weights):
+        self.model.coefs_ = [weights[key] for key in sorted(weights.keys())]
+    
+class WrappedSklearnMLPClassifier:
+    def __init__(self, model: CustomMLPClassifier):
+        self.model = model
+
+    def predict_proba(self, X):
+        return self.model.predict_proba(X)
+
+
+#------------------------------------------------------------------
 
 def inv_softplus(x):
     return jnp.where(x < 20.0, jnp.log(jnp.exp(x) - 1.0), x)
@@ -148,6 +196,27 @@ class Classifier(eqx.Module):
         x = self.net(jnp.concatenate([state, action], axis=-1))
         #x = jax.nn.sigmoid(x) # let model predict logits instead of probabilities
         return x.squeeze(-1)
+    
+    def set_weights_from_custom_mlp(self, weights):
+        # Get the current weights of the eqx MLP
+        eqx_weights = eqx.tree_at(lambda mlp: mlp.weights, self.net)
+        eqx_biases = eqx.tree_at(lambda mlp: mlp.biases, self.net)
+
+        # Flatten the list of weights and biases from eqx MLP
+        eqx_weights_flat = [w for layer_weights in eqx_weights for w in layer_weights]
+        eqx_biases_flat = [b for layer_biases in eqx_biases for b in layer_biases]
+
+        # Assign weights from CustomMLPClassifier to eqx MLP
+        for i, w in enumerate(weights):
+            eqx_weights_flat[i] = jnp.array(w)
+
+        # Assign biases from CustomMLPClassifier to eqx MLP (assuming 0 biases)
+        for i, b in enumerate([0]*len(eqx_biases_flat)):
+            eqx_biases_flat[i] = jnp.array(b)
+
+        # Reconstruct the eqx MLP weight and bias tree
+        self.net = eqx.tree_at(lambda mlp: mlp.weights, self.net, eqx_weights_flat)
+        self.net = eqx.tree_at(lambda mlp: mlp.biases, self.net, eqx_biases_flat)
 
 def make_classifier(
     observation_space: Box | Discrete,
@@ -219,7 +288,7 @@ class ActorCritic:
         observation_space: Box | Discrete,
         action_space: Box | Discrete,
         config: DictConfig,
-        key: jax.Array,
+        key: jax.Array
     ) -> None:
         classifier_key, actor_key, critic_key, target_key, safety_critic_key, safety_target_key = jax.random.split(key, 6)
         self.actor = make_actor(observation_space, action_space, config, actor_key)
@@ -230,8 +299,50 @@ class ActorCritic:
         )
         self.critics_learner = Learner(self.critics, config.agent.critic_optimizer)
 
-        self.classifier = make_classifier(observation_space, action_space, config, classifier_key)
+        #TAG: FIXED_CLASSIFIER
+        '''self.classifier = make_classifier(observation_space, action_space, config, classifier_key)
         self.classifier_learner = Learner(self.classifier, config.agent.classifier_optimizer)
+        #----------temporary -----------
+        self.observation_space = observation_space
+        self.action_space = action_space
+        self.config = config
+        self.classifier_key = classifier_key
+        self.classifier_reset_counter = 0
+        self.classifier_max_updates = config.agent.classifier_max_updates'''
+        import joblib
+        from ssac.agent.testing_fixed_classifier import CustomMLPClassifier
+        from sklearn.neural_network import MLPClassifier as SklearnMLPClassifier
+        #loaded_classifier = joblib.load('/cluster/home/plahmann/safe-control-as-inference/sk_classifier.pkl')
+        #self.classifier = WrappedSklearnMLPClassifier(loaded_classifier)
+        #values are hard coded for this environment
+
+        #classifier = joblib.load('sk_classifier.pkl')
+
+        #print(type(classifier.get_model_weights()))
+        #print(classifier.get_model_weights()[0])
+        #weights = classifier.get_model_weights()
+        #np.savez('classifier_weights.npz', *weights)
+        
+        #hard coded values for environment safe-gym point to goal
+        self.classifier = CustomMLPClassifier(60, 2, 64)
+        # Generate dummy data for training
+        np.random.seed(0)  # For reproducibility
+
+        # Dummy features (X_train) and labels (y_train)
+        X_train = np.random.rand(20, 62)  # 20 samples, 5 features
+        y_train = np.random.randint(0, 2, size=20)  # Binary labels (0 or 1)
+        self.classifier.train(X_train, y_train)
+
+
+        loaded_weights = np.load('/cluster/home/plahmann/safe-control-as-inference/classifier_weights.npz', allow_pickle=True)
+        self.classifier.set_model_weights(loaded_weights)
+
+        '''#----second possible solution----
+        self.classifier = make_classifier(observation_space, action_space, config, classifier_key)
+        loaded_weights = np.load('/cluster/home/plahmann/safe-control-as-inference/classifier_weights.npz', allow_pickle=True)
+        self.classifier.set_weights_from_custom_mlp(loaded_weights)'''
+
+        #----------------------
         self.safety_critics = make_critics(observation_space, action_space, config, safety_critic_key)
         self.target_safety_critics = make_critics(
             observation_space, action_space, config, safety_target_key)
@@ -261,14 +372,18 @@ class ActorCritic:
             self.discount,
             critics_key,
         )
-
+        '''#----reset classifier------------- TAG: FIXED_CLASSIFIER
+        self.classifier_reset_counter += 1
+        if self.classifier_reset_counter % self.classifier_max_updates == 0:
+            self.reset_classifier()
+        #---------------------------------
         (self.classifier, self.classifier_learner.state), classifier_out = update_classifier(
             batch,
             self.classifier,
             self.classifier_learner.state,
             self.classifier_learner,
             classifier_key,
-        )
+        )'''
 
         (self.safety_critics, self.safety_critics_learner.state), safety_critic_loss = update_safety_critics(
             batch,
@@ -303,14 +418,21 @@ class ActorCritic:
             self.log_lagrangians_learner.state,
             self.log_lagrangians_learner,
         )
-        out = dict(
-            classifier_loss=classifier_out["loss"],
+        #into dict: TAG: FIXED CLASSIFIER
+        '''classifier_loss=classifier_out["loss"],
             classifier_mean_prediction=classifier_out["preds_prob"],
             classification_mean_cost=classifier_out["costs"],
+            logit_min=classifier_out["logit_min"], 
+            logit_10_quantile=classifier_out["logit_10_quantile"], 
+            logit_mean=classifier_out["logit_mean"],'''
+        out = dict(
             critic_loss=critic_loss,
             safety_critic_loss=safety_critic_loss,
             lagrangian_loss=lagrangian_loss,
             actor_loss=rest["loss"],
+            actor__critic_component=rest["critic_component"], 
+            actor__safety_critic_component=rest["safety_critic_component"], 
+            actor__surprise_component=rest["surprise_component"],
             lagrangian=jnp.exp(self.log_lagrangians.sum()),
         )
         return out
@@ -331,6 +453,13 @@ class ActorCritic:
             only_arrays(self.target_safety_critics),
         )
         self.target_safety_critics = eqx.apply_updates(self.target_safety_critics, safety_updates)
+    
+    def reset_classifier(self):
+        #reset classifier to retrain form scratch; for more stable safety classification
+        #todo: cleaner passing of variables
+        self.classifier = make_classifier(self.observation_space, self.action_space, self.config, self.classifier_key)
+        self.classifier_learner = Learner(self.classifier, self.config.agent.classifier_optimizer)
+        self.classifier_reset_counter = 0
 
 
 @eqx.filter_jit
@@ -388,18 +517,18 @@ def update_classifier(
 
         # Compute binary cross-entropy loss; need logits
         loss = sigmoid_binary_cross_entropy(preds, binary_targets)
-        return loss.mean(), (jnp.mean(jax.nn.sigmoid(preds)), jnp.mean(batch.cost)) #(preds, batch.cost) #(debugging)if we use the wandb logging in update function
+        return loss.mean(), (jnp.mean(jax.nn.sigmoid(preds)), jnp.mean(batch.cost), jnp.min(preds), jnp.quantile(preds, 0.1), jnp.mean(preds)) #(preds, batch.cost) #(debugging)if we use the wandb logging in update function
 
     # Compute loss and gradients
-    (loss, (preds_prob, costs)), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(classifier)
+    (loss, (preds_prob, costs, logit_min, logit_10_quantile, logit_mean)), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(classifier)
     # Perform optimization step
     new_classifier, new_learning_state = learner.grad_step(classifier, grads, learning_state)
-    return (new_classifier, new_learning_state), dict(loss=loss, preds_prob=preds_prob, costs=costs)
+    return (new_classifier, new_learning_state), dict(loss=loss, preds_prob=preds_prob, costs=costs, logit_min=logit_min, logit_10_quantile=logit_10_quantile, logit_mean=logit_mean)
 
 #----------------------------------
 #ADD UPDATE SAFETY CRITICS FUNCTION; (mostly) ANALOGOUS TO update_critics
 # delete unnecessary inputs
-@eqx.filter_jit
+#@eqx.filter_jit
 def update_safety_critics(
     batch: Transition,
     safety_critics: CriticPair,
@@ -422,10 +551,15 @@ def update_safety_critics(
         next_qs = jax.vmap(target_safety_critics)(batch.next_observation, next_action)
         debiased_q = jnp.minimum(*next_qs)
         #compute log term of policy probability
-        safety_logit = jax.vmap(classifier)(batch.observation, batch.action)
-        safety_prob = jax.nn.sigmoid(safety_logit)
-        #safety_prob = jnp.clip(safety_prob, 0.01, 0.99) #clip safety_prob
+        '''safety_logit = jax.vmap(classifier)(batch.observation, batch.action)
+        safety_logit = jnp.clip(safety_logit, -100, None) #clip safety_logit
+
+        safety_prob = jax.nn.sigmoid(safety_logit)'''
+        X_input_format = jnp.hstack((batch.observation, batch.action))
+        #X_input_np = X_input_format.copy().block_until_ready()        
+        safety_prob = classifier.predict_proba(X_input_format)
         log_safety_prob = jnp.log(safety_prob) #jnp.log(safety_prob) #classifier probability for safety #const: jnp.log(1.0)
+        log_safety_prob = jnp.clip(log_safety_prob, -100, None) #clip probability
         next_q = log_safety_prob + safety_discount * debiased_q
         next_q = jax.lax.stop_gradient(next_q)
         #computes critic networks prediction. 
@@ -459,11 +593,11 @@ def update_actor(
         surprise = -lagrangians * log_pi
         #add term for safety critic to objective (subtract safety critic q value)
         objective = debiased_q + debiased_safety_q + surprise #added safety critic term 
-        return -objective.mean(), log_pi.mean()
+        return -objective.mean(), (log_pi.mean(), jnp.mean(debiased_q), jnp.mean(debiased_safety_q), jnp.mean(surprise))
 
-    (loss, log_pi), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(actor)
+    (loss, (log_pi, critic_component, safety_critic_component, surprise_component)), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(actor)
     new_actor, new_learning_state = learner.grad_step(actor, grads, learning_state)
-    return (new_actor, new_learning_state), dict(loss=loss, log_pi=log_pi)
+    return (new_actor, new_learning_state), dict(loss=loss, log_pi=log_pi, critic_component=critic_component, safety_critic_component=safety_critic_component, surprise_component=surprise_component)
 
 
 @eqx.filter_jit

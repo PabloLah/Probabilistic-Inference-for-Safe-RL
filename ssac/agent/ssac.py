@@ -12,6 +12,7 @@ from ssac.rl.trajectory import Transition
 from ssac.rl.types import FloatArray, Report
 from ssac.rl.utils import PRNGSequence
 
+from ssac.agent.testing_fixed_classifier import CustomMLPClassifier
 
 @eqx.filter_jit
 def policy(actor, observation, key):
