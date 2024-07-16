@@ -41,10 +41,22 @@ class SafeSAC:
             observation_space, action_space, config, next(self.prng)
         )
         self.metrics_monitor = MetricsMonitor()
+        self.classifier_max_wait = config.agent.classifier_retrain
+        self.classifier_retrain_counter = self.classifier_max_wait + 1
 
     def __call__(self, observation: FloatArray, train: bool = True) -> FloatArray:
+        
         if len(self.replay_buffer) > self.config.agent.prefill:
+            #re-train classifier on all available data every config.agent.classifier_retrain times (loop)
+            if self.classifier_retrain_counter > self.classifier_max_wait:
+                self.actor_critic.reset_classifier(next(self.prng))
+                for batch in self.replay_buffer.sample_all_batches():
+                    metrics = self.actor_critic.retrain_classifier(batch, next(self.prng))
+                    log(metrics, self.metrics_monitor)
+                self.classifier_retrain_counter = 0
+            #update actor
             for batch in self.replay_buffer.sample(self.config.training.parallel_envs):
+                self.classifier_retrain_counter += 1 #count how many times actor is updated
                 losses = self.actor_critic.update(batch, next(self.prng))
                 log(losses, self.metrics_monitor)
             self.actor_critic.polyak(self.config.agent.polyak_rate, self.config.agent.safety_polyak_rate)

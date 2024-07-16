@@ -4,7 +4,7 @@ replay_buffer:
 batch_size: 256
 discount: 0.99
 safety_discount: 0.99
-classifier_max_updates: 1000
+classifier_retrain: 1000 #retrain classifier every 1000 updates of actor
 safety_polyak_rate: 5e-3
 polyak_rate: 5e-3
 initial_log_lagrangians: [0.]

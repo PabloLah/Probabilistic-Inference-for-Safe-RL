@@ -27,6 +27,15 @@ class ReplayBuffer:
             batch = self._random.sample(self.buffer, self._batch_size)
             out = Transition(*map(np.stack, zip(*batch)))  # type: ignore
             yield out
+    
+    #for retraining the classifier on all available transitions
+    def sample_all_batches(self) -> Iterator[Transition]:
+        num_full_batches = len(self.buffer) // self._batch_size
+        for i in range(num_full_batches):
+            batch = self.buffer[i*self._batch_size:(i+1)*self._batch_size]
+            out = Transition(*map(np.stack, zip(*batch)))  # type: ignore
+            yield out
+
 
     def __len__(self):
         return len(self.buffer)
